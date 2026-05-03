@@ -27,9 +27,9 @@ impl Interval {
 }
 
 pub enum Msg {
-    Snapshot(Snapshot),
+    Snapshot(Box<Snapshot>),
     Error(String),
-    Quota(QuotaResponse, Credentials),
+    Quota(Box<QuotaResponse>, Credentials),
     QuotaError(String),
 }
 
@@ -146,7 +146,7 @@ impl App {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Snapshot(s) => {
-                    self.snapshot = Some(s);
+                    self.snapshot = Some(*s);
                     self.error = None;
                     self.in_flight = false;
                 }
@@ -155,7 +155,7 @@ impl App {
                     self.in_flight = false;
                 }
                 Msg::Quota(q, creds) => {
-                    self.quota = Some(q);
+                    self.quota = Some(*q);
                     self.credentials = Some(creds);
                     self.quota_error = None;
                 }
@@ -178,7 +178,7 @@ impl App {
             // Local JSONL parse.
             let snap_msg = match usage::projects_dir() {
                 Some(dir) => match usage::collect(&dir) {
-                    Ok(s) => Msg::Snapshot(s),
+                    Ok(s) => Msg::Snapshot(Box::new(s)),
                     Err(e) => Msg::Error(e.to_string()),
                 },
                 None => Msg::Error("could not locate ~/.claude/projects".into()),
@@ -189,7 +189,7 @@ impl App {
             match quota::load_credentials() {
                 Ok(creds) => match quota::fetch_quota(&creds) {
                     Ok(q) => {
-                        let _ = tx.send(Msg::Quota(q, creds));
+                        let _ = tx.send(Msg::Quota(Box::new(q), creds));
                     }
                     Err(e) => {
                         let _ = tx.send(Msg::QuotaError(e.to_string()));

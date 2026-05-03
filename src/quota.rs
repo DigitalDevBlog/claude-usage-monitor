@@ -24,8 +24,6 @@ pub struct ExtraUsage {
     #[serde(default)]
     pub is_enabled: bool,
     #[serde(default)]
-    pub utilization: Option<f64>,
-    #[serde(default)]
     pub used_credits: Option<f64>,
     #[serde(default)]
     pub monthly_limit: Option<f64>,

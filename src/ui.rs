@@ -266,11 +266,12 @@ fn draw_live_quota_block(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(quota_line("5-hour", q.five_hour.as_ref()));
-    lines.push(quota_line("7-day  (all models)", q.seven_day.as_ref()));
-    lines.push(quota_line("7-day  (Sonnet)", q.seven_day_sonnet.as_ref()));
-    lines.push(quota_line("7-day  (Opus)", q.seven_day_opus.as_ref()));
+    let mut lines: Vec<Line> = vec![
+        quota_line("5-hour", q.five_hour.as_ref()),
+        quota_line("7-day  (all models)", q.seven_day.as_ref()),
+        quota_line("7-day  (Sonnet)", q.seven_day_sonnet.as_ref()),
+        quota_line("7-day  (Opus)", q.seven_day_opus.as_ref()),
+    ];
 
     if let Some(extra) = &q.extra_usage {
         if extra.is_enabled {
@@ -700,7 +701,7 @@ fn fmt_n(n: u64) -> String {
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, b) in bytes.iter().enumerate() {
-        if i > 0 && (bytes.len() - i) % 3 == 0 {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(*b as char);
