@@ -275,8 +275,8 @@ fn draw_live_quota_block(f: &mut Frame, area: Rect, app: &App) {
 
     if let Some(extra) = &q.extra_usage {
         if extra.is_enabled {
-            let used = extra.used_credits.unwrap_or(0.0);
-            let limit = extra.monthly_limit.unwrap_or(0.0);
+            let used = extra.used_major();
+            let limit = extra.limit_major();
             let cur = extra.currency.as_deref().unwrap_or("USD");
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<22}", "extra credits"), Style::default().fg(Color::Gray)),

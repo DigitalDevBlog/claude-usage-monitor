@@ -29,6 +29,57 @@ pub struct ExtraUsage {
     pub monthly_limit: Option<f64>,
     #[serde(default)]
     pub currency: Option<String>,
+    /// Number of decimal digits `used_credits`/`monthly_limit` are shifted by (e.g. `2` means
+    /// the API reported cents). Absent when the API already reports major currency units.
+    #[serde(default)]
+    pub decimal_places: Option<u32>,
+}
+
+impl ExtraUsage {
+    fn minor_to_major_divisor(&self) -> f64 {
+        10f64.powi(self.decimal_places.unwrap_or(0) as i32)
+    }
+
+    /// Credits used, converted from minor units (e.g. cents) to major currency units.
+    pub fn used_major(&self) -> f64 {
+        self.used_credits.unwrap_or(0.0) / self.minor_to_major_divisor()
+    }
+
+    /// Monthly spend limit, converted from minor units (e.g. cents) to major currency units.
+    pub fn limit_major(&self) -> f64 {
+        self.monthly_limit.unwrap_or(0.0) / self.minor_to_major_divisor()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_minor_units_to_major_using_decimal_places() {
+        let extra = ExtraUsage {
+            is_enabled: true,
+            used_credits: Some(709.0),
+            monthly_limit: Some(4000.0),
+            currency: Some("EUR".to_string()),
+            decimal_places: Some(2),
+        };
+        assert_eq!(extra.used_major(), 7.09);
+        assert_eq!(extra.limit_major(), 40.0);
+    }
+
+    #[test]
+    fn defaults_to_no_conversion_when_decimal_places_absent() {
+        let extra = ExtraUsage {
+            is_enabled: true,
+            used_credits: Some(6.78),
+            monthly_limit: Some(40.0),
+            currency: Some("EUR".to_string()),
+            decimal_places: None,
+        };
+        assert_eq!(extra.used_major(), 6.78);
+        assert_eq!(extra.limit_major(), 40.0);
+    }
 }
 
 #[derive(Deserialize, Clone, Debug, Default)]
