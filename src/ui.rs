@@ -385,7 +385,8 @@ fn draw_subscription_block(f: &mut Frame, area: Rect, snap: &Snapshot, cfg: &Con
         format!("{:.0}%", ratio * 100.0)
     };
     let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(ratio_color))
+        // bg doubles as the label color over the filled bar (ratatui swaps fg/bg there)
+        .gauge_style(Style::default().fg(ratio_color).bg(Color::Black))
         .ratio(display_ratio)
         .label(format!("{:.1}× value  ({recouped} of plan cost recouped)", ratio));
     f.render_widget(gauge, rows[1]);
@@ -498,7 +499,8 @@ fn draw_window_block(
             Color::Green
         };
         let gauge = Gauge::default()
-            .gauge_style(Style::default().fg(color))
+            // bg doubles as the label color over the filled bar (ratatui swaps fg/bg there)
+            .gauge_style(Style::default().fg(color).bg(Color::Black))
             .ratio(pct)
             .label(format!("{:.1}% of ${:.2}", pct * 100.0, limit));
         f.render_widget(gauge, rows[1]);
