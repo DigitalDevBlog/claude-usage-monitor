@@ -273,7 +273,23 @@ fn draw_live_quota_block(f: &mut Frame, area: Rect, app: &App) {
         quota_line("7-day  (Opus)", q.seven_day_opus.as_ref()),
     ];
 
-    if let Some(extra) = &q.extra_usage {
+    if let Some(p) = &app.prepaid {
+        // Prepaid usage-credits balance (the model that replaced postpaid extra usage).
+        let mut spans = vec![
+            Span::styled(format!("{:<22}", "usage credits"), Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("{:.2} {}", p.balance_major(), p.currency()),
+                Style::default().fg(Color::Yellow),
+            ),
+        ];
+        if let Some(exp) = p.next_expires_at {
+            spans.push(Span::styled(
+                format!("  expires {}", exp.format("%Y-%m-%d")),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        lines.push(Line::from(spans));
+    } else if let Some(extra) = &q.extra_usage {
         if extra.is_enabled {
             let used = extra.used_major();
             let limit = extra.limit_major();

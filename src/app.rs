@@ -3,7 +3,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, PlanKind};
-use crate::quota::{self, Credentials, QuotaResponse};
+use crate::quota::{self, Credentials, PrepaidCredits, QuotaResponse};
 use crate::usage::{self, Snapshot};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub enum Msg {
     Error(String),
     Quota(Box<QuotaResponse>, Credentials),
     QuotaError(String),
+    Prepaid(Box<PrepaidCredits>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -71,6 +72,7 @@ pub struct App {
     pub error: Option<String>,
     pub quota: Option<QuotaResponse>,
     pub quota_error: Option<String>,
+    pub prepaid: Option<PrepaidCredits>,
     pub credentials: Option<Credentials>,
     pub interval: Interval,
     pub tab: Tab,
@@ -94,6 +96,7 @@ impl App {
             error: None,
             quota: None,
             quota_error: None,
+            prepaid: None,
             credentials: None,
             interval: Interval::Five,
             tab: Tab::Overview,
@@ -160,6 +163,7 @@ impl App {
                     self.quota_error = None;
                 }
                 Msg::QuotaError(e) => self.quota_error = Some(e),
+                Msg::Prepaid(p) => self.prepaid = Some(*p),
             }
         }
         if !self.in_flight && self.last_refresh.elapsed() >= self.interval.as_duration() {
@@ -187,14 +191,21 @@ impl App {
 
             // Live OAuth quota fetch — best-effort; failure just leaves the panel empty.
             match quota::load_credentials() {
-                Ok(creds) => match quota::fetch_quota(&creds) {
-                    Ok(q) => {
-                        let _ = tx.send(Msg::Quota(Box::new(q), creds));
+                Ok(creds) => {
+                    match quota::fetch_quota(&creds) {
+                        Ok(q) => {
+                            let _ = tx.send(Msg::Quota(Box::new(q), creds.clone()));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Msg::QuotaError(e.to_string()));
+                        }
                     }
-                    Err(e) => {
-                        let _ = tx.send(Msg::QuotaError(e.to_string()));
+                    // Prepaid usage-credits balance — only present on accounts migrated
+                    // off the postpaid extra-usage model; failure just keeps the fallback.
+                    if let Ok(p) = quota::fetch_prepaid_credits(&creds) {
+                        let _ = tx.send(Msg::Prepaid(Box::new(p)));
                     }
-                },
+                }
                 Err(e) => {
                     let _ = tx.send(Msg::QuotaError(format!("no credentials: {e}")));
                 }

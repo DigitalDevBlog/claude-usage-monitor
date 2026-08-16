@@ -51,6 +51,67 @@ impl ExtraUsage {
     }
 }
 
+#[derive(Deserialize, Clone, Debug)]
+pub struct Money {
+    pub amount_minor: f64,
+    #[serde(default)]
+    pub currency: Option<String>,
+    #[serde(default)]
+    pub exponent: Option<u32>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct PrepaidBalance {
+    #[serde(default)]
+    pub money: Option<Money>,
+}
+
+/// Response of `GET /api/oauth/organizations/{org_uuid}/prepaid/credits` — the prepaid
+/// usage-credits balance that replaced the postpaid `extra_usage` model for migrated accounts.
+#[derive(Deserialize, Clone, Debug)]
+pub struct PrepaidCredits {
+    /// Top-level balance in minor units (cents). Kept as a fallback; `balance.money`
+    /// is preferred because it carries an explicit exponent.
+    #[serde(default)]
+    pub amount: Option<f64>,
+    #[serde(default)]
+    pub currency: Option<String>,
+    #[serde(default)]
+    pub balance: Option<PrepaidBalance>,
+    #[serde(default)]
+    pub next_expires_at: Option<DateTime<Utc>>,
+}
+
+impl PrepaidCredits {
+    /// Remaining balance in major currency units (e.g. euros).
+    pub fn balance_major(&self) -> f64 {
+        if let Some(m) = self.balance.as_ref().and_then(|b| b.money.as_ref()) {
+            return m.amount_minor / 10f64.powi(m.exponent.unwrap_or(2) as i32);
+        }
+        self.amount.unwrap_or(0.0) / 100.0
+    }
+
+    pub fn currency(&self) -> &str {
+        self.balance
+            .as_ref()
+            .and_then(|b| b.money.as_ref())
+            .and_then(|m| m.currency.as_deref())
+            .or(self.currency.as_deref())
+            .unwrap_or("USD")
+    }
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct ProfileResponse {
+    #[serde(default)]
+    pub organization: Option<ProfileOrg>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct ProfileOrg {
+    pub uuid: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +127,48 @@ mod tests {
         };
         assert_eq!(extra.used_major(), 7.09);
         assert_eq!(extra.limit_major(), 40.0);
+    }
+
+    #[test]
+    fn parses_prepaid_credits_and_converts_to_major_units() {
+        // Trimmed real response from GET /api/oauth/organizations/{org}/prepaid/credits.
+        let json = r#"{
+            "amount": 2934,
+            "currency": "EUR",
+            "balance": {"money": {"amount_minor": 2934, "currency": "EUR", "exponent": 2}, "credits": null},
+            "auto_reload_settings": null,
+            "tranches": [{"remaining_amount_minor_units": 2933, "currency": "EUR", "expires_at": "2027-07-14T00:00:00Z"}],
+            "next_expires_at": "2027-07-14T00:00:00Z"
+        }"#;
+        let credits: PrepaidCredits = serde_json::from_str(json).unwrap();
+        assert_eq!(credits.balance_major(), 29.34);
+        assert_eq!(credits.currency(), "EUR");
+        assert_eq!(
+            credits.next_expires_at.unwrap(),
+            "2027-07-14T00:00:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
+    #[test]
+    fn prepaid_credits_fall_back_to_top_level_amount_as_cents() {
+        let json = r#"{"amount": 2934, "currency": "EUR"}"#;
+        let credits: PrepaidCredits = serde_json::from_str(json).unwrap();
+        assert_eq!(credits.balance_major(), 29.34);
+        assert_eq!(credits.currency(), "EUR");
+        assert!(credits.next_expires_at.is_none());
+    }
+
+    #[test]
+    fn parses_org_uuid_from_profile_response() {
+        let json = r#"{
+            "account": {"uuid": "184f5e94-95fb-4c02-b80f-89c5fe33c0ef", "email": "x@y.z"},
+            "organization": {"uuid": "e6cf8ec6-61c6-4f63-a308-9e3a340c52ba", "name": "org"}
+        }"#;
+        let profile: ProfileResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            profile.organization.unwrap().uuid,
+            "e6cf8ec6-61c6-4f63-a308-9e3a340c52ba"
+        );
     }
 
     #[test]
@@ -156,12 +259,12 @@ impl From<CredentialsFile> for Credentials {
     }
 }
 
-pub fn fetch_quota(creds: &Credentials) -> Result<QuotaResponse> {
+fn get_json<T: serde::de::DeserializeOwned>(creds: &Credentials, url: &str, what: &str) -> Result<T> {
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(15))
         .build();
     let resp = agent
-        .get("https://api.anthropic.com/api/oauth/usage")
+        .get(url)
         .set("Authorization", &format!("Bearer {}", creds.access_token))
         .set("anthropic-beta", "oauth-2025-04-20")
         .set("User-Agent", "claude-usage-monitor (oauth)")
@@ -173,5 +276,26 @@ pub fn fetch_quota(creds: &Credentials) -> Result<QuotaResponse> {
             ),
             ureq::Error::Transport(t) => anyhow!("transport: {t}"),
         })?;
-    resp.into_json::<QuotaResponse>().context("parse quota JSON")
+    resp.into_json::<T>()
+        .with_context(|| format!("parse {what} JSON"))
+}
+
+pub fn fetch_quota(creds: &Credentials) -> Result<QuotaResponse> {
+    get_json(creds, "https://api.anthropic.com/api/oauth/usage", "quota")
+}
+
+/// Fetches the prepaid usage-credits balance. Requires an extra round-trip to `/profile`
+/// for the organization UUID. Errors (404, org-less accounts, …) are expected for accounts
+/// still on the postpaid extra-usage model — callers fall back to `extra_usage`.
+pub fn fetch_prepaid_credits(creds: &Credentials) -> Result<PrepaidCredits> {
+    let profile: ProfileResponse =
+        get_json(creds, "https://api.anthropic.com/api/oauth/profile", "profile")?;
+    let org = profile
+        .organization
+        .ok_or_else(|| anyhow!("profile has no organization"))?;
+    get_json(
+        creds,
+        &format!("https://api.anthropic.com/api/oauth/organizations/{}/prepaid/credits", org.uuid),
+        "prepaid credits",
+    )
 }
